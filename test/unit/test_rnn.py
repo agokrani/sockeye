@@ -52,6 +52,8 @@ def test_ln_cell(cell, expected_param_keys):
     assert outputs.list_outputs() == ['rnn_t0_out_output', 'rnn_t1_out_output', 'rnn_t2_out_output']
 
     args, outs, auxs = outputs.infer_shape(rnn_t0_data=(10, 50), rnn_t1_data=(10, 50), rnn_t2_data=(10, 50))
+    print(outputs.infer_shape(rnn_t0_data=(10, 50), rnn_t1_data=(10, 50), rnn_t2_data=(10, 50)))
+    print(outs)
     assert outs == [(10, 100), (10, 100), (10, 100)]
 
 

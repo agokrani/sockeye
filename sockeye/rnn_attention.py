@@ -593,8 +593,9 @@ class MlpAttention(Attention):
         # input (coverage) to hidden
         self.att_c2h_weight = mx.sym.Variable("%sc2h_weight" % self.prefix) if config_coverage is not None else None
         # layer normalization
-        self._ln = layers.LayerNormalization(num_hidden=attention_num_hidden,
-                                             prefix="%snorm" % self.prefix) if layer_normalization else None
+        self._ln = None
+        if layer_normalization:
+            self._ln = layers.LayerNormalization(prefix="%snorm" % self.prefix)
 
     def on(self, source: mx.sym.Symbol, source_length: mx.sym.Symbol, source_seq_len: int) -> Callable:
         """
@@ -657,7 +658,7 @@ class MlpAttention(Attention):
                                                     name="%squery_plus_input" % self.prefix)
 
             if self._ln is not None:
-                attention_hidden = self._ln.normalize(attention_hidden)
+                attention_hidden = self._ln(data=attention_hidden)
 
             # (batch_size, seq_len, attention_num_hidden)
             attention_hidden = mx.sym.Activation(attention_hidden, act_type="tanh",
