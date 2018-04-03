@@ -220,6 +220,7 @@ TRAINING_STATE_NAME = "training.pkl"
 SCHEDULER_STATE_NAME = "scheduler.pkl"
 TRAINING_STATE_PARAMS_NAME = "params"
 ARGS_STATE_NAME = "args.json"
+SCORED_DATASET_DIR_NAME = "scored_data"
 
 # Arguments that may differ and still resume training
 ARGS_MAY_DIFFER = ["overwrite_output", "use-tensorboard", "quiet",
