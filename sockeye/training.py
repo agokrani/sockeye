@@ -36,7 +36,7 @@ from . import lr_scheduler
 from . import model
 from . import utils
 from .optimizers import BatchState, CheckpointState, SockeyeOptimizer, OptimizerConfig
-
+import pdb
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +85,9 @@ class TrainingModel(model.SockeyeModel):
         source = mx.sym.Variable(C.SOURCE_NAME)
         source_words = source.split(num_outputs=self.config.config_embed_source.num_factors,
                                     axis=2, squeeze_axis=True)[0]
+
         source_length = utils.compute_lengths(source_words)
+
         target = mx.sym.Variable(C.TARGET_NAME)
         target_length = utils.compute_lengths(target)
         labels = mx.sym.reshape(data=mx.sym.Variable(C.TARGET_LABEL_NAME), shape=(-1,))
@@ -179,6 +181,7 @@ class TrainingModel(model.SockeyeModel):
         """
         Runs forward/backward pass and updates training metric(s).
         """
+
         self.module.forward_backward(batch)
         self.module.update_metric(metric, batch.label)
 
@@ -389,6 +392,12 @@ class TrainState:
         with open(fname, "rb") as fp:
             return pickle.load(fp)
 
+class BatchScores:
+    def __init__(self,
+                 batch: mx.io.DataBatch,
+                    scores: mx.ndarray):
+            self.batch = batch
+            self.scores = scores
 
 class EarlyStoppingTrainer:
     """
@@ -461,6 +470,7 @@ class EarlyStoppingTrainer:
 
         :return: Best score on validation data observed during training.
         """
+
         self._check_args(metrics, early_stopping_metric, lr_decay_opt_states_reset, lr_decay_param_reset, decoder)
         logger.info("Early stopping by optimizing '%s'", early_stopping_metric)
 
@@ -494,6 +504,7 @@ class EarlyStoppingTrainer:
         tic = time.time()
 
         next_data_batch = train_iter.next()
+        scored_data = []
         while True:
 
             if not train_iter.iter_next():
@@ -511,7 +522,14 @@ class EarlyStoppingTrainer:
             # STEP
             ######
             batch = next_data_batch
-            self._step(self.model, batch, checkpoint_frequency, metric_train, metric_loss)
+            forward_pass_output = self._step(self.model, batch, checkpoint_frequency, metric_train, metric_loss)
+            scores = np.empty(0)
+            for i in range(batch.label[0].shape[0]):
+                sum = 0
+                for j in range(batch.label[0].shape[1]):
+                    sum += forward_pass_output[i][j][(batch.label[0][i][j])-1]
+                scores = np.append(scores, sum)
+            scored_data.append(BatchScores(batch, scores))
             if train_iter.iter_next():
                 next_data_batch = train_iter.next()
                 self.model.prepare_batch(next_data_batch)
@@ -598,7 +616,7 @@ class EarlyStoppingTrainer:
         self._cleanup(lr_decay_opt_states_reset)
         logger.info("Training finished. Best checkpoint: %d. Best validation %s: %.6f",
                     self.state.best_checkpoint, early_stopping_metric, self.state.best_metric)
-        return self.state.best_metric
+        return self.state.best_metric,
 
     def _step(self,
               model: TrainingModel,
@@ -616,8 +634,9 @@ class EarlyStoppingTrainer:
         ####################
         # Forward & Backward
         ####################
-        model.run_forward_backward(batch, metric_train)
 
+        model.run_forward_backward(batch, metric_train)
+        forward_pass_output = model.module.get_outputs()[0].reshape((batch.label[0].shape[0], batch.label[0].shape[1], model.config.vocab_target_size))
         ####################
         # Gradient rescaling
         ####################
@@ -640,6 +659,7 @@ class EarlyStoppingTrainer:
         if metric_loss is not None and isinstance(optimizer, SockeyeOptimizer):
             # Loss for this batch
             metric_loss.reset()
+
             metric_loss.update(batch.label, model.module.get_outputs())
             [(_, m_val)] = metric_loss.get_name_value()
             batch_state = BatchState(metric_val=m_val)
@@ -655,6 +675,8 @@ class EarlyStoppingTrainer:
             if results:
                 for _, k, v in results:
                     logger.info('Monitor: Batch [{:d}] {:s} {:s}'.format(self.state.updates, k, v))
+
+        return forward_pass_output
 
     def _evaluate(self, val_iter: data_io.BaseParallelSampleIter, val_metric: mx.metric.EvalMetric):
         """
@@ -763,6 +785,10 @@ class EarlyStoppingTrainer:
     @property
     def current_params_fname(self) -> str:
         return os.path.join(self.model.output_dir, C.PARAMS_NAME % self.state.checkpoint)
+
+    @property
+    def current_scored_data_fname(self) -> str:
+        return os.path.join(self.model.output_dir, C.SCORED_DATASET_DIR_NAME % self.state.epoch)
 
     @property
     def metrics_fname(self) -> str:
