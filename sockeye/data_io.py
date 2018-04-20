@@ -32,6 +32,7 @@ from . import config
 from . import constants as C
 from . import vocab
 from .utils import check_condition, smart_open, get_tokens, OnlineMeanAndVariance
+import pdb
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,9 @@ def define_bucket_batch_sizes(buckets: List[Tuple[int, int]],
                               batch_size: int,
                               batch_by_words: bool,
                               batch_num_devices: int,
-                              data_target_average_len: List[Optional[float]]) -> List[BucketBatchSize]:
+                              data_target_average_len: List[Optional[float]],
+                              num_samples_per_bucket: List[int],
+                              fill_up: str) -> List[BucketBatchSize]:
     """
     Computes bucket-specific batch sizes (sentences, average_words).
 
@@ -163,6 +166,9 @@ def define_bucket_batch_sizes(buckets: List[Tuple[int, int]],
             batch_size_word = batch_size_seq * average_seq_len
         else:
             batch_size_seq = batch_size
+            #if fill_up is None:
+            #batch_size_seq = num_samples_per_bucket[buck_idx]
+            #pdb.set_trace()
             batch_size_word = batch_size_seq * average_seq_len
         bucket_batch_sizes.append(BucketBatchSize(bucket, batch_size_seq, batch_size_word))
         # Track largest number of word samples in a batch
@@ -726,6 +732,100 @@ def get_prepared_data_iters(prepared_data_dir: str,
     return train_iter, validation_iter, config_data, source_vocabs, target_vocab
 
 
+def get_scoring_data_iters(sources: List[str],
+                           target: str,
+                           source_vocabs: List[vocab.Vocab],
+                           target_vocab: vocab.Vocab,
+                           source_vocab_paths: List[Optional[str]],
+                           target_vocab_path: Optional[str],
+                           shared_vocab: bool,
+                           batch_size: Optional[int],
+                           batch_num_devices: int,
+                           fill_up: str,
+                           max_seq_len_source: int,
+                           max_seq_len_target: int,
+                           bucketing: bool,
+                           bucket_width: int,
+                           batch_by_words: bool = False
+                           )-> Tuple['BaseParallelSampleIter',
+                                                        'DataConfig', 'DataInfo']:
+    """
+        Returns data iterators for data set tp be scored.
+
+        :param sources: Path to source data to be scored (with optional factor data paths).
+        :param target: Path to target data to be scored.
+        :param source_vocabs: Source vocabulary and optional factor vocabularies.
+        :param target_vocab: Target vocabulary.
+        :param source_vocab_paths: Path to source vocabulary.
+        :param target_vocab_path: Path to target vocabulary.
+        :param shared_vocab: Whether the vocabularies are shared.
+        :param batch_size: Batch size.
+        :param batch_num_devices: Number of devices batches will be parallelized across.
+        :param fill_up: Fill-up strategy for buckets.
+        :param max_seq_len_source: Maximum source sequence length.
+        :param max_seq_len_target: Maximum target sequence length.
+        :param bucketing: Whether to use bucketing.
+        :param bucket_width: Size of buckets.
+        :param batch_by_words: Size batches by words rather than sentences.
+        :return: Tuple of (training data iterator, validation data iterator, data config).
+        """
+    logger.info("===================================")
+    logger.info("Creating data iterator for scoring")
+    logger.info("===================================")
+    # Pass 1: get target/source length ratios.
+    length_statistics = analyze_sequence_lengths(sources, target, source_vocabs, target_vocab,
+                                                 max_seq_len_source, max_seq_len_target)
+    # define buckets
+    buckets = define_parallel_buckets(max_seq_len_source, max_seq_len_target, bucket_width,
+                                      length_statistics.length_ratio_mean) if bucketing else [
+        (max_seq_len_source, max_seq_len_target)]
+
+    sources_sentences = [SequenceReader(source, vocab, add_bos=False) for source, vocab in zip(sources, source_vocabs)]
+    target_sentences = SequenceReader(target, target_vocab, add_bos=True)
+
+    # 2. pass: Get data statistics
+    data_statistics = get_data_statistics(sources_sentences, target_sentences, buckets,
+                                          length_statistics.length_ratio_mean, length_statistics.length_ratio_std,
+                                          source_vocabs, target_vocab)
+
+    bucket_batch_sizes = define_bucket_batch_sizes(buckets,
+                                                   batch_size,
+                                                   batch_by_words,
+                                                   batch_num_devices,
+                                                   data_statistics.average_len_target_per_bucket,
+                                                   data_statistics.num_sents_per_bucket,
+                                                   fill_up)
+
+    data_statistics.log(bucket_batch_sizes)
+    # pdb.set_trace()
+    data_loader = RawParallelDatasetLoader(buckets=buckets,
+                                           eos_id=target_vocab[C.EOS_SYMBOL],
+                                           pad_id=C.PAD_ID)
+
+    scoring_data = data_loader.load(sources_sentences, target_sentences,
+                                     data_statistics.num_sents_per_bucket).fill_up(bucket_batch_sizes, fill_up)
+
+    data_info = DataInfo(sources=sources,
+                         target=target,
+                         source_vocabs=source_vocab_paths,
+                         target_vocab=target_vocab_path,
+                         shared_vocab=shared_vocab,
+                         num_shards=1)
+
+    config_data = DataConfig(data_statistics=data_statistics,
+                             max_seq_len_source=max_seq_len_source,
+                             max_seq_len_target=max_seq_len_target,
+                             num_source_factors=len(sources))
+
+    score_iter = ParallelSampleIter(data=scoring_data,
+                                    buckets=buckets,
+                                    batch_size=batch_size,
+                                    bucket_batch_sizes=bucket_batch_sizes,
+                                    num_factors=len(sources))
+
+    return score_iter, config_data, data_info
+
+
 def get_training_data_iters(sources: List[str],
                             target: str,
                             validation_sources: List[str],
@@ -790,7 +890,9 @@ def get_training_data_iters(sources: List[str],
                                                    batch_size,
                                                    batch_by_words,
                                                    batch_num_devices,
-                                                   data_statistics.average_len_target_per_bucket)
+                                                   data_statistics.average_len_target_per_bucket,
+                                                   data_statistics.num_sents_per_bucket,
+                                                   fill_up)
 
     data_statistics.log(bucket_batch_sizes)
 
@@ -1174,6 +1276,17 @@ class ParallelDataSet(Sized):
                     source[bucket_idx] = mx.nd.concat(bucket_source, bucket_source.take(random_indices), dim=0)
                     target[bucket_idx] = mx.nd.concat(bucket_target, bucket_target.take(random_indices), dim=0)
                     label[bucket_idx] = mx.nd.concat(bucket_label, bucket_label.take(random_indices), dim=0)
+                elif fill_up == None:
+                    rest = bucket_batch_size - num_samples % bucket_batch_size
+                    logger.info("Zero padding %d in bucket %s "
+                                "to size it to multiple of %d",
+                                rest, bucket, bucket_batch_size)
+                    zero_pad_source = mx.ndarray.zeros((rest, bucket_source.shape[1], bucket_source.shape[2]))
+                    source[bucket_idx] = mx.nd.concat(bucket_source, zero_pad_source, dim=0)
+                    zero_pad_target = mx.ndarray.zeros((rest, bucket_target.shape[1]))
+                    target[bucket_idx] = mx.nd.concat(bucket_target, zero_pad_target, dim=0)
+                    zero_pad_label = mx.ndarray.zeros((rest, bucket_label.shape[1]))
+                    label[bucket_idx] = mx.nd.concat(bucket_label, zero_pad_label, dim=0)
                 else:
                     raise NotImplementedError('Unknown fill-up strategy')
 

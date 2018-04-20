@@ -47,6 +47,8 @@ from .config import Config
 from .log import setup_main_logger
 from .optimizers import OptimizerConfig
 from .utils import check_condition
+from . import scores
+import pdb
 
 # Temporary logger, the real one (logging to a file probably, will be created in the main function)
 logger = setup_main_logger(__name__, file_logging=False, console=True)
@@ -342,6 +344,8 @@ def create_data_iters_and_vocabs(args: argparse.Namespace,
 
         sources = [args.source] + args.source_factors
         sources = [str(os.path.abspath(source)) for source in sources]
+
+        utils.check_condition(args.fill_up is not None, "Please turn on random sampling for training. Multiple batch size functionality is not supported by training.")
 
         train_iter, validation_iter, config_data, data_info = data_io.get_training_data_iters(
             sources=sources,
@@ -811,6 +815,7 @@ def main():
                     mxmonitor_stat_func=args.monitor_stat_func,
                     allow_missing_parameters=args.allow_missing_params,
                     existing_parameters=args.params)
+
 
 
 if __name__ == "__main__":

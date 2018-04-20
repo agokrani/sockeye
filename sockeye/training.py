@@ -392,12 +392,6 @@ class TrainState:
         with open(fname, "rb") as fp:
             return pickle.load(fp)
 
-class BatchScores:
-    def __init__(self,
-                 batch: mx.io.DataBatch,
-                    scores: mx.ndarray):
-            self.batch = batch
-            self.scores = scores
 
 class EarlyStoppingTrainer:
     """
@@ -502,9 +496,7 @@ class EarlyStoppingTrainer:
 
         speedometer = Speedometer(frequency=C.MEASURE_SPEED_EVERY, auto_reset=False)
         tic = time.time()
-
         next_data_batch = train_iter.next()
-        scored_data = []
         while True:
 
             if not train_iter.iter_next():
@@ -522,14 +514,7 @@ class EarlyStoppingTrainer:
             # STEP
             ######
             batch = next_data_batch
-            forward_pass_output = self._step(self.model, batch, checkpoint_frequency, metric_train, metric_loss)
-            scores = np.empty(0)
-            for i in range(batch.label[0].shape[0]):
-                sum = 0
-                for j in range(batch.label[0].shape[1]):
-                    sum += forward_pass_output[i][j][(batch.label[0][i][j])-1]
-                scores = np.append(scores, sum)
-            scored_data.append(BatchScores(batch, scores))
+            self._step(self.model, batch, checkpoint_frequency, metric_train, metric_loss)
             if train_iter.iter_next():
                 next_data_batch = train_iter.next()
                 self.model.prepare_batch(next_data_batch)
@@ -636,7 +621,6 @@ class EarlyStoppingTrainer:
         ####################
 
         model.run_forward_backward(batch, metric_train)
-        forward_pass_output = model.module.get_outputs()[0].reshape((batch.label[0].shape[0], batch.label[0].shape[1], model.config.vocab_target_size))
         ####################
         # Gradient rescaling
         ####################
@@ -676,7 +660,6 @@ class EarlyStoppingTrainer:
                 for _, k, v in results:
                     logger.info('Monitor: Batch [{:d}] {:s} {:s}'.format(self.state.updates, k, v))
 
-        return forward_pass_output
 
     def _evaluate(self, val_iter: data_io.BaseParallelSampleIter, val_metric: mx.metric.EvalMetric):
         """
@@ -785,10 +768,6 @@ class EarlyStoppingTrainer:
     @property
     def current_params_fname(self) -> str:
         return os.path.join(self.model.output_dir, C.PARAMS_NAME % self.state.checkpoint)
-
-    @property
-    def current_scored_data_fname(self) -> str:
-        return os.path.join(self.model.output_dir, C.SCORED_DATASET_DIR_NAME % self.state.epoch)
 
     @property
     def metrics_fname(self) -> str:

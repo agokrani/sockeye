@@ -22,6 +22,7 @@ from typing import Callable, Optional
 from sockeye.lr_scheduler import LearningRateSchedulerFixedStep
 from . import constants as C
 from . import data_io
+import pdb
 
 
 def regular_file() -> Callable:
@@ -939,12 +940,63 @@ def add_train_cli_args(params):
     add_device_args(params)
     add_logging_args(params)
 
+def add_scoring_cli_args(params):
+    add_device_args(params)
+    add_logging_args(params)
+    add_scoring_args(params)
+
+def add_scoring_args(params, required=True):
+
+    scoring_params = params.add_argument_group("Scoring parameters")
+
+    # Unfortunately we must set --source/--target to required as we do not accept
+    # --prepared-data parameter for this module.
+    scoring_params.add_argument('--source', '-s',
+                        required=required,
+                        type=regular_file(),
+                        help='Source side of parallel data set to be scored.')
+
+    scoring_params.add_argument('--target', '-t',
+                        required=required,
+                        type=regular_file(),
+                        help='Target side of parallel dataset to be scored.')
+
+    scoring_params.add_argument('--model', '-m',
+                               required=True,
+                               nargs='+',
+                               help='Model folder.Model determines config, best parameters and vocab files.')
+
+    scoring_params.add_argument('--checkpoints', '-c',
+                               default=None,
+                               type=int,
+                               nargs='+',
+                               help='If not given, chooses best checkpoint for model.')
+
+    scoring_params.add_argument('--max-seq-len',
+                        type=multiple_values(num_values=2, greater_or_equal=1),
+                        default=(100, 100),
+                        help='Maximum sequence length in tokens. Note that the target side will be extended by '
+                             'the <BOS> (beginning of sentence) token, increasing the effective target length. '
+                             'Use "x:x" to specify separate values for src&tgt. Default: %(default)s.')
+    scoring_params.add_argument('--fill-up',
+                              type=str,
+                              default=None,
+                              help=argparse.SUPPRESS)
+
+    scoring_params.add_argument('--no-bucketing',
+                        action='store_true',
+                        help='Disable bucketing: always unroll the graph to --max-seq-len. Default: %(default)s.')
+
+    scoring_params.add_argument('--bucket-width',
+                        type=int_greater_or_equal(1),
+                        default=10,
+                        help='Width of buckets in tokens. Default: %(default)s.')
+
 
 def add_translate_cli_args(params):
     add_inference_args(params)
     add_device_args(params)
     add_logging_args(params)
-
 
 def add_inference_args(params):
     decode_params = params.add_argument_group("Inference parameters")
