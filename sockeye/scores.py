@@ -24,7 +24,7 @@ from . import model
 from . import utils
 from . import loss
 from .log import setup_main_logger
-from .utils import acquire_gpus, get_num_gpus, log_basic_info, grouper
+from .utils import acquire_gpus, get_num_gpus, log_basic_info, grouper, check_condition
 
 import pdb
 
@@ -87,7 +87,7 @@ def main():
                 score_iter=score_iter)
 
 
-    scorer = LogProbabilityScorer(model=scorer, source_vocabs=[source_vocab], target_vocab=target_vocab)
+    scorer = LogProbabilityScorer(model=scorer, source_vocabs=[source_vocab], target_vocab=target_vocab, context=context)
     scorer.get_scored_dataset(train_iter=score_iter)
 
 
@@ -310,11 +310,13 @@ class LogProbabilityScorer:
     def __init__(self,
                  model: ScoringModel,
                  source_vocabs: List[vocab.Vocab],
-                 target_vocab: vocab.Vocab)-> None:
+                 target_vocab: vocab.Vocab,
+                 context: mx.context.Context)-> None:
         self.model = model
         self.source_vocabs = source_vocabs
         self.source_vocabs_inv = [vocab.reverse_vocab(source_vocab) for source_vocab in self.source_vocabs]
         self.vocab_target = target_vocab
+        self.context = context
         self.vocab_target_inv = vocab.reverse_vocab(self.vocab_target)
         self.stop_ids = {self.vocab_target[C.EOS_SYMBOL], C.PAD_ID}
         self.start_id = self.vocab_target[C.BOS_SYMBOL]
@@ -406,11 +408,12 @@ class LogProbabilityScorer:
             :return: list of log probability scores for each sentence in the data batch.
             """
 
-        scores = np.empty(0)
+        scores = mx.nd.empty(0, self.context)
+        scores = scores.asnumpy()
         for i in range(forward_pass_outputs.shape[0]):
-            sum = 0
+            sum = mx.nd.zeros((1,), self.context)
             for j in range(forward_pass_outputs.shape[1]):
-                sum += forward_pass_outputs[i][j][labels[i][j]]
+                sum += forward_pass_outputs[i][j][labels[i][j].as_in_context(self.context)]
             scores = np.append(scores, sum)
         return scores
 
