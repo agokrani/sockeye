@@ -87,7 +87,7 @@ def main():
                 score_iter=score_iter)
 
 
-    scorer = LogProbabilityScorer(model=scorer, source_vocabs=[source_vocab], target_vocab=target_vocab, context=context)
+    scorer = LogProbabilityScorer(model=scorer, source_vocabs=[source_vocab], target_vocab=target_vocab, context=context, output_folder=os.path.abspath(args.output))
     scorer.get_scored_dataset(train_iter=score_iter)
 
 
@@ -311,7 +311,8 @@ class LogProbabilityScorer:
                  model: ScoringModel,
                  source_vocabs: List[vocab.Vocab],
                  target_vocab: vocab.Vocab,
-                 context: mx.context.Context)-> None:
+                 context: mx.context.Context,
+                 output_folder: str)-> None:
         self.model = model
         self.source_vocabs = source_vocabs
         self.source_vocabs_inv = [vocab.reverse_vocab(source_vocab) for source_vocab in self.source_vocabs]
@@ -320,7 +321,7 @@ class LogProbabilityScorer:
         self.vocab_target_inv = vocab.reverse_vocab(self.vocab_target)
         self.stop_ids = {self.vocab_target[C.EOS_SYMBOL], C.PAD_ID}
         self.start_id = self.vocab_target[C.BOS_SYMBOL]
-        self.scored_dataset_dir_name = os.path.join(self.model.model_dir, C.SCORED_DATASET_DIR_NAME)
+        self.scored_dataset_dir_name = os.path.join(output_folder, C.SCORED_DATASET_DIR_NAME)
         if not os.path.exists(self.scored_dataset_dir_name):
             os.mkdir(self.scored_dataset_dir_name)
         self.scored_dataset_file_pointer = utils.smart_open(os.path.join(self.scored_dataset_dir_name, C.SCORED_DATASET_FILE_NAME), "wt")

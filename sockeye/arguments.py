@@ -991,6 +991,9 @@ def add_scoring_args(params, required=True):
                         type=int_greater_or_equal(1),
                         default=10,
                         help='Width of buckets in tokens. Default: %(default)s.')
+    scoring_params.add_argument('--output', '-o',
+                        required=True,
+                        help='Folder where scored dataset results are written to.')
 
 
 def add_translate_cli_args(params):
